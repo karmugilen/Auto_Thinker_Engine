@@ -146,6 +146,33 @@ uv run python scripts/train_cardreamer.py --comparison
 uv run pytest tests/ -v
 ```
 
+### Terminal / HPC launcher
+
+The project does not need a graphical terminal session. Use the root launcher
+to run the existing scripts through one stable command:
+
+```bash
+python run.py doctor
+python run.py smoke --host localhost --port 2000
+python run.py train --arm cnn --task carla_right_turn_simple --steps 10000
+python run.py phase2 --config configs/phase2_jepa_pretrain.yaml
+python run.py compare --steps 500000
+```
+
+For a Slurm allocation, copy CARLA to persistent storage and submit the
+headless job template. The default is a deliberately short 10,000-step CNN
+validation run:
+
+```bash
+CARLA_ROOT=/scratch/$USER/CARLA_0.9.15 \
+RUN_MODE=cnn STEPS=10000 \
+sbatch jobs/slurm_run.sh
+```
+
+Other modes are `phase2`, `smoke`, `custom_jepa`, `vjepa2`, and `comparison`.
+Keep CARLA, datasets, checkpoints, and `outputs/` outside temporary job-local
+storage when allocations can be preempted.
+
 ## Key Design Decisions
 
 ### DreamerV3 Backbone: dreamerv3-torch (PyTorch)

@@ -110,7 +110,11 @@ def _doctor(args: argparse.Namespace) -> int:
         args.require_carla,
     )
 
-    for module_name in ("torch", "numpy", "yaml", "ruamel.yaml"):
+    required_modules = ["torch", "numpy", "yaml", "ruamel.yaml"]
+    if args.require_carla:
+        required_modules.extend(["flask", "cv2", "shapely"])
+
+    for module_name in required_modules:
         importable = _check_import(module_name)
         report(
             f"Python module {module_name}",

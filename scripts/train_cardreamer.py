@@ -119,7 +119,10 @@ def make_carla_env(task_name: str, seed: int = 0, image_size: tuple = (64, 64)):
 
     try:
         import car_dreamer
-        env, task_config = car_dreamer.create_task(task_name)
+        task_argv = None
+        if os.environ.get("CARLA_PORT"):
+            task_argv = ["--env.world.carla_port", os.environ["CARLA_PORT"]]
+        env, task_config = car_dreamer.create_task(task_name, argv=task_argv)
     except ImportError:
         print("[train] CarDreamer not installed. Creating a placeholder env.")
         print("[train] On target hardware: bash scripts/setup_cardreamer.sh /path/to/carla")
@@ -412,7 +415,10 @@ def run_comparison(
         total_steps = r.get("total_steps", 0)
         eval_reward = r.get("eval_reward", float("nan"))
         eval_length = r.get("eval_length", float("nan"))
-        print(f"{arm_name:<15} {seed:<8} {total_steps:<10} {eval_reward:<15.2f} {eval_length:<15.1f}")
+        print(
+            f"{arm_name:<15} {seed:<8} {total_steps:<10} "
+            f"{eval_reward:<15.2f} {eval_length:<15.1f}"
+        )
 
     # Aggregate by arm
     print(f"\n{'='*80}")

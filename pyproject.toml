@@ -42,6 +42,10 @@ dependencies = [
     # Both coexist fine as separate packages.
     "gymnasium>=0.29",
     "gym>=0.21,<1.0",          # dreamerv3-torch compatibility
+    "flask>=3.0,<4.0",         # CarDreamer monitor import
+    "opencv-python>=4.9,<5.0", # CarDreamer camera/BEV rendering
+    "shapely>=1.8,<2.0",       # CarDreamer navigation geometry
+    "networkx>=3.1,<4.0",      # CarDreamer route planning
 
     # Utilities
     "psutil>=5.9",

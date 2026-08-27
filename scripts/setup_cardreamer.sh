@@ -44,32 +44,33 @@ cd "$PROJECT_ROOT"
 git submodule update --init --recursive
 
 # --- Step 3: Install project with uv ---
-echo "[3/6] Installing project dependencies via uv..."
+echo "[3/6] Installing project dependencies via uv (locked)..."
 cd "$PROJECT_ROOT"
-uv sync --extra dev
+uv sync --frozen --extra dev
 
-# --- Step 4: Install CarDreamer (task definitions only) ---
-echo "[4/6] Installing CarDreamer (CARLA task definitions)..."
-cd "$CARDREAMER_DIR"
-# CarDreamer's car_dreamer package provides CARLA env wrappers/tasks.
-# We do NOT use CarDreamer's JAX-based DreamerV3 — only the task defs.
-pip install flit 2>/dev/null || true
-flit install --symlink 2>/dev/null || flit install --pth-file 2>/dev/null || {
-    echo "  WARNING: flit install failed. Adding CarDreamer to PYTHONPATH instead."
-    export PYTHONPATH="$CARDREAMER_DIR:${PYTHONPATH:-}"
-}
+# --- Step 4: Prepare CarDreamer task definitions ---
+echo "[4/6] Preparing CarDreamer task definitions..."
+# CarDreamer's package metadata pins old Gym/Numpy versions. The main project
+# declares compatible runtime dependencies and imports this submodule through
+# PYTHONPATH, so do not run `flit install` here.
+if [ ! -d "$CARDREAMER_DIR/car_dreamer" ]; then
+    echo "  ERROR: CarDreamer submodule is missing."
+    echo "  Run: git submodule update --init --recursive"
+    exit 1
+fi
+export PYTHONPATH="$CARDREAMER_DIR:${PYTHONPATH:-}"
 
 # --- Step 5: Install CARLA Python API ---
 echo "[5/6] Installing CARLA Python API..."
 CARLA_EGG=$(find "$CARLA_ROOT/PythonAPI/carla/dist" -name "carla-*cp310*.whl" 2>/dev/null | head -1)
 if [ -n "$CARLA_EGG" ]; then
-    pip install "$CARLA_EGG"
+    python -m pip install "$CARLA_EGG"
     echo "  Installed: $CARLA_EGG"
 else
     CARLA_EGG=$(find "$CARLA_ROOT/PythonAPI/carla/dist" -name "carla-*cp310*.egg" 2>/dev/null | head -1)
     if [ -n "$CARLA_EGG" ]; then
         echo "  Found .egg: $CARLA_EGG"
-        echo "  Add to PYTHONPATH or install with easy_install"
+        echo "  Add the .egg to PYTHONPATH if no cp310 wheel is available."
     else
         echo "  WARNING: No CARLA Python 3.10 package found in $CARLA_ROOT"
         echo "  You may need to build from source or download the correct version."

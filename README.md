@@ -173,6 +173,9 @@ Other modes are `phase2`, `smoke`, `custom_jepa`, `vjepa2`, and `comparison`.
 Keep CARLA, datasets, checkpoints, and `outputs/` outside temporary job-local
 storage when allocations can be preempted.
 
+For the complete runbook tailored to the Ubuntu 22.04 + RTX A4000 container,
+see [docs/SERVER_RUNBOOK_A4000.md](docs/SERVER_RUNBOOK_A4000.md).
+
 ## Key Design Decisions
 
 ### DreamerV3 Backbone: dreamerv3-torch (PyTorch)

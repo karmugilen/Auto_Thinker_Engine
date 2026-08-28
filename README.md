@@ -86,7 +86,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 
 # Install optional dependencies
-uv sync --extra dev      # pytest, ruff
+uv sync --extra dev --extra carla  # pytest, ruff, CARLA Python API
 uv sync --extra wandb    # Weights & Biases
 uv sync --extra viz      # UMAP, seaborn
 
@@ -113,6 +113,7 @@ uv run python scripts/download_comma2k19.py --output-dir data/comma2k19 --verify
 ```bash
 # Start CARLA server first:
 # $CARLA_ROOT/CarlaUE4.sh -RenderOffScreen -quality-level=Low
+# CARLA must be launched by a non-root user.
 
 uv run python scripts/train_cardreamer.py --arm cnn --task carla_right_turn_simple
 ```
@@ -164,7 +165,7 @@ headless job template. The default is a deliberately short 10,000-step CNN
 validation run:
 
 ```bash
-CARLA_ROOT=/scratch/$USER/CARLA_0.9.15 \
+CARLA_ROOT=/scratch/$USER/software \
 RUN_MODE=cnn STEPS=10000 \
 sbatch jobs/slurm_run.sh
 ```
@@ -174,7 +175,7 @@ Keep CARLA, datasets, checkpoints, and `outputs/` outside temporary job-local
 storage when allocations can be preempted.
 
 For the complete runbook tailored to the Ubuntu 22.04 + RTX A4000 container,
-see [docs/SERVER_RUNBOOK_A4000.md](docs/SERVER_RUNBOOK_A4000.md).
+see [SERVER_RUNBOOK_A4000.md](SERVER_RUNBOOK_A4000.md).
 
 ## Key Design Decisions
 

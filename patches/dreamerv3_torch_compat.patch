@@ -1,0 +1,112 @@
+diff --git a/dreamer.py b/dreamer.py
+index f4de475..d484cc2 100644
+--- a/dreamer.py
++++ b/dreamer.py
+@@ -26,7 +26,7 @@ to_np = lambda x: x.detach().cpu().numpy()
+ 
+ 
+ class Dreamer(nn.Module):
+-    def __init__(self, obs_space, act_space, config, logger, dataset):
++    def __init__(self, obs_space, act_space, config, logger, dataset, custom_encoder=None):
+         super(Dreamer, self).__init__()
+         self._config = config
+         self._logger = logger
+@@ -41,7 +41,8 @@ class Dreamer(nn.Module):
+         self._step = logger.step // config.action_repeat
+         self._update_count = 0
+         self._dataset = dataset
+-        self._wm = models.WorldModel(obs_space, act_space, self._step, config)
++        self._wm = models.WorldModel(obs_space, act_space, self._step, config,
++                                     custom_encoder=custom_encoder)
+         self._task_behavior = models.ImagBehavior(config, self._wm)
+         if (
+             config.compile and os.name != "nt"
+diff --git a/models.py b/models.py
+index 91f756f..30619b7 100644
+--- a/models.py
++++ b/models.py
+@@ -27,14 +27,19 @@ class RewardEMA:
+ 
+ 
+ class WorldModel(nn.Module):
+-    def __init__(self, obs_space, act_space, step, config):
++    def __init__(self, obs_space, act_space, step, config, custom_encoder=None):
+         super(WorldModel, self).__init__()
+         self._step = step
+         self._use_amp = True if config.precision == 16 else False
+         self._config = config
+         shapes = {k: tuple(v.shape) for k, v in obs_space.spaces.items()}
+-        self.encoder = networks.MultiEncoder(shapes, **config.encoder)
+-        self.embed_size = self.encoder.outdim
++        if custom_encoder is not None:
++            # Use injected encoder — RSSM will be sized to its outdim
++            self.encoder = custom_encoder
++            self.embed_size = custom_encoder.outdim
++        else:
++            self.encoder = networks.MultiEncoder(shapes, **config.encoder)
++            self.embed_size = self.encoder.outdim
+         self.dynamics = networks.RSSM(
+             config.dyn_stoch,
+             config.dyn_deter,
+diff --git a/tools.py b/tools.py
+index 3efb932..f2956d2 100644
+--- a/tools.py
++++ b/tools.py
+@@ -31,12 +31,17 @@ def symexp(x):
+ class RequiresGrad:
+     def __init__(self, model):
+         self._model = model
++        # Store original requires_grad setting per parameter
++        self._requires_grad = {p: p.requires_grad for p in model.parameters()}
+ 
+     def __enter__(self):
+-        self._model.requires_grad_(requires_grad=True)
++        # Only set requires_grad=True for parameters that were originally trainable
++        for p, req in self._requires_grad.items():
++            p.requires_grad_(req)
+ 
+     def __exit__(self, *args):
+-        self._model.requires_grad_(requires_grad=False)
++        for p in self._model.parameters():
++            p.requires_grad_(False)
+ 
+ 
+ class TimeRecording:
+@@ -744,6 +749,7 @@ class Optimizer:
+             "sgd": lambda: torch.optim.SGD(parameters, lr=lr),
+             "momentum": lambda: torch.optim.SGD(parameters, lr=lr, momentum=0.9),
+         }[opt]()
++        self._use_amp = use_amp
+         self._scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+ 
+     def __call__(self, loss, params, retain_graph=True):
+@@ -751,15 +757,20 @@ class Optimizer:
+         metrics = {}
+         metrics[f"{self._name}_loss"] = loss.detach().cpu().numpy()
+         self._opt.zero_grad()
+-        self._scaler.scale(loss).backward(retain_graph=retain_graph)
+-        self._scaler.unscale_(self._opt)
+-        # loss.backward(retain_graph=retain_graph)
+-        norm = torch.nn.utils.clip_grad_norm_(params, self._clip)
+-        if self._wd:
+-            self._apply_weight_decay(params)
+-        self._scaler.step(self._opt)
+-        self._scaler.update()
+-        # self._opt.step()
++        if self._use_amp:
++            self._scaler.scale(loss).backward(retain_graph=retain_graph)
++            self._scaler.unscale_(self._opt)
++            norm = torch.nn.utils.clip_grad_norm_(params, self._clip)
++            if self._wd:
++                self._apply_weight_decay(params)
++            self._scaler.step(self._opt)
++            self._scaler.update()
++        else:
++            loss.backward(retain_graph=retain_graph)
++            norm = torch.nn.utils.clip_grad_norm_(params, self._clip)
++            if self._wd:
++                self._apply_weight_decay(params)
++            self._opt.step()
+         self._opt.zero_grad()
+         metrics[f"{self._name}_grad_norm"] = to_np(norm)
+         return metrics

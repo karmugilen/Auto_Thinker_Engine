@@ -50,7 +50,8 @@ git add \
   jobs/slurm_run.sh \
   scripts/setup_cardreamer.sh \
   scripts/train_cardreamer.py \
-  docs/SERVER_RUNBOOK_A4000.md
+  patches/dreamerv3_torch_compat.patch \
+  SERVER_RUNBOOK_A4000.md
 
 git commit -m "Document and prepare headless server execution"
 git push origin main
@@ -152,6 +153,13 @@ third_party/CarDreamer
 third_party/dreamerv3_torch
 ```
 
+The project pins dreamerv3-torch to the reachable upstream commit
+`6ef8646d807cd10ce0c88e10a7e943211e7fc44c`. Setup then applies the tracked
+`patches/dreamerv3_torch_compat.patch`, which restores the custom encoder and
+CPU optimizer behavior required by this project. This is expected: the
+submodule working tree will show the compatibility patch as local changes.
+Do not discard those changes before running the tests or training.
+
 If the repository was cloned without submodules:
 
 ```bash
@@ -184,7 +192,7 @@ Install the locked project environment:
 
 ```bash
 cd "$PROJECT_DIR"
-uv sync --frozen --extra dev
+uv sync --frozen --extra dev --extra carla
 source .venv/bin/activate
 
 which python
@@ -223,14 +231,19 @@ tar -xzf CARLA_0.9.15.tar.gz
 find "$SOFTWARE_DIR" -maxdepth 3 -name CarlaUE4.sh -print
 ```
 
-Set CARLA_ROOT to the directory containing CarlaUE4.sh:
+Set CARLA_ROOT to the directory containing the discovered CarlaUE4.sh. Do not
+assume that the archive creates a `CARLA_0.9.15/` directory:
 
 ```bash
-export CARLA_ROOT=$SOFTWARE_DIR/CARLA_0.9.15
-test -x "$CARLA_ROOT/CarlaUE4.sh" && echo "CARLA server found"
+CARLA_SERVER="$(find "$SOFTWARE_DIR" -maxdepth 3 -type f -name CarlaUE4.sh -print -quit)"
+test -n "$CARLA_SERVER" || { echo "CarlaUE4.sh not found"; exit 1; }
+export CARLA_ROOT="$(dirname "$CARLA_SERVER")"
+test -x "$CARLA_SERVER" && echo "CARLA server found: $CARLA_SERVER"
 ```
 
-If the archive extracts to another directory name, update CARLA_ROOT.
+If the archive extracts directly into `$SOFTWARE_DIR`, the command above sets
+`CARLA_ROOT=$SOFTWARE_DIR`. If it extracts into a child directory, it sets
+`CARLA_ROOT` to that child directory automatically.
 
 CARLA is run without a graphical display using:
 
@@ -258,12 +271,28 @@ source .venv/bin/activate
 bash scripts/setup_cardreamer.sh "$CARLA_ROOT"
 ```
 
-The helper checks the submodules, verifies the locked environment, installs the
-CARLA Python 3.10 wheel, and runs basic checks.
+The helper checks the submodules, skips the submodule network update when both
+directories are already populated, applies the tracked Dreamer compatibility
+patch, verifies the locked environment, installs the CARLA Python API, and
+runs basic checks.
 
 It deliberately does not install CarDreamer’s own package metadata because
 that metadata pins incompatible old Gym and NumPy versions. CarDreamer is used
 from the checked-out submodule through PYTHONPATH.
+
+The CARLA 0.9.15 simulator archive commonly contains only Python 2.7 and
+Python 3.7 packages. That is not a usable package for this project’s Python
+3.10 environment. The official PyPI release provides the Linux CPython 3.10
+wheel, so the helper falls back to it when the archive has no `cp310` wheel:
+
+https://pypi.org/project/carla/0.9.15/
+
+If you need to perform that step manually:
+
+```bash
+uv pip install --python "$PROJECT_DIR/.venv/bin/python" pip
+uv pip install --python "$PROJECT_DIR/.venv/bin/python" "carla==0.9.15"
+```
 
 Re-export the paths after the helper exits:
 
@@ -369,6 +398,36 @@ then run the verification command.
 The job wrapper starts CARLA headlessly, waits for it, runs the smoke test, and
 shuts CARLA down.
 
+CARLA/Unreal refuses to start as root. Check the identity before launching:
+
+```bash
+id -u
+id -un
+```
+
+The preferred solution is to run the Docker container or compute job as a
+non-root user. If the current container is root, ask the administrator for an
+existing non-root account and ensure that account can read and write the CARLA
+installation directory. The job wrapper now fails immediately with an
+actionable error instead of waiting 30 seconds for a client timeout.
+
+If the container must remain root but contains an existing non-root account,
+set `CARLA_RUN_USER` so only the CARLA server is launched through `runuser`:
+
+```bash
+getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1, $3}'
+
+CARLA_ROOT="$CARLA_ROOT" \
+CARLA_RUN_USER=<existing-non-root-user> \
+RUN_MODE=smoke \
+bash jobs/slurm_run.sh
+```
+
+The CARLA directory must be writable by that account because Unreal creates
+runtime files below its installation. If there is no non-root account in the
+image, the container must be restarted with a non-root UID; the project cannot
+make CARLA accept uid 0 from inside the launcher.
+
 Without Slurm:
 
 ```bash
@@ -379,6 +438,8 @@ RUN_MODE=smoke \
 bash jobs/slurm_run.sh
 ```
 
+For the root-container workaround, add `CARLA_RUN_USER=...` to that command.
+
 With Slurm:
 
 ```bash
@@ -388,6 +449,9 @@ CARLA_ROOT="$CARLA_ROOT" \
 RUN_MODE=smoke \
 sbatch jobs/slurm_run.sh
 ```
+
+If Slurm starts the job inside a root container, also pass
+`CARLA_RUN_USER=<existing-non-root-user>`.
 
 The smoke test checks that CARLA can connect, spawn a vehicle and camera, and
 advance 100 synchronous simulation steps. Do not train if it fails.
@@ -611,15 +675,26 @@ the container needs to be restarted with host GPU passthrough.
 
 ### No module named carla
 
-Install the CARLA Python 3.10 wheel from
-CARLA_ROOT/PythonAPI/carla/dist and export PYTHONPATH again.
+The simulator archive may not contain a Python 3.10 wheel. Install the
+official PyPI package into the project’s uv environment:
+
+```bash
+uv pip install --python "$PROJECT_DIR/.venv/bin/python" pip
+uv pip install --python "$PROJECT_DIR/.venv/bin/python" "carla==0.9.15"
+```
+
+Then rerun:
+
+```bash
+python run.py doctor --require-cuda --require-carla
+```
 
 ### No module named cv2, flask, or shapely
 
 Run:
 
 ```bash
-uv sync --frozen --extra dev
+uv sync --frozen --extra dev --extra carla
 ```
 
 Do not install CarDreamer’s old dependency metadata over the root environment.
@@ -676,4 +751,3 @@ resume. Request a longer allocation before launching the full comparison.
 14. Run V-JEPA2 for 10,000 steps.
 15. Run the full three-arm comparison.
 ```
-

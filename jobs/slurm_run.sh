@@ -6,7 +6,7 @@
 #SBATCH --time=2-00:00:00
 #
 # Headless terminal runner. Submit with, for example:
-#   CARLA_ROOT=/scratch/$USER/CARLA_0.9.15 \
+#   CARLA_ROOT=/scratch/$USER/software \
 #   RUN_MODE=cnn STEPS=10000 sbatch jobs/slurm_run.sh
 #
 # Supported RUN_MODE values:
@@ -49,13 +49,76 @@ if [[ -z "${CARLA_ROOT:-}" ]]; then
   exit 2
 fi
 
+find_carla_server() {
+  local candidate="$1"
+  if [[ -f "$candidate" && "$(basename "$candidate")" == "CarlaUE4.sh" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  if [[ -f "$candidate/CarlaUE4.sh" ]]; then
+    printf '%s\n' "$candidate/CarlaUE4.sh"
+    return 0
+  fi
+  find "$candidate" -maxdepth 3 -type f -name CarlaUE4.sh -print -quit
+}
+
+CARLA_SERVER="$(find_carla_server "$CARLA_ROOT")"
+if [[ -z "$CARLA_SERVER" ]]; then
+  echo "ERROR: Could not find CarlaUE4.sh below CARLA_ROOT=$CARLA_ROOT" >&2
+  echo "Set CARLA_ROOT to the simulator directory or its containing directory." >&2
+  exit 2
+fi
+if [[ ! -x "$CARLA_SERVER" ]]; then
+  echo "ERROR: CARLA server is not executable: $CARLA_SERVER" >&2
+  echo "Run: chmod +x '$CARLA_SERVER'" >&2
+  exit 2
+fi
+CARLA_ROOT="$(dirname "$CARLA_SERVER")"
+export CARLA_ROOT
 export PYTHONPATH="$CARLA_ROOT/PythonAPI/carla:$PROJECT_ROOT/third_party/CarDreamer:$PROJECT_ROOT/third_party/dreamerv3_torch${PYTHONPATH:+:$PYTHONPATH}"
+
+# Unreal/CARLA refuses uid 0. The preferred fix is to run the container/job as
+# a normal user. For containers that must start as root, CARLA_RUN_USER may
+# name an existing non-root account; only the CARLA server is then launched
+# through runuser, while the Python client remains in the current environment.
+CARLA_LAUNCH_PREFIX=()
+if [[ "$(id -u)" -eq 0 ]]; then
+  if [[ -z "${CARLA_RUN_USER:-}" ]]; then
+    echo "ERROR: CARLA refuses to run as root (uid 0)." >&2
+    echo "Run the container as a non-root user, or set CARLA_RUN_USER to an existing non-root account." >&2
+    echo "Example: CARLA_RUN_USER=student RUN_MODE=smoke bash jobs/slurm_run.sh" >&2
+    exit 2
+  fi
+  if ! id "$CARLA_RUN_USER" >/dev/null 2>&1; then
+    echo "ERROR: CARLA_RUN_USER does not exist: $CARLA_RUN_USER" >&2
+    exit 2
+  fi
+  if [[ "$(id -u "$CARLA_RUN_USER")" -eq 0 ]]; then
+    echo "ERROR: CARLA_RUN_USER must resolve to a non-root account: $CARLA_RUN_USER" >&2
+    exit 2
+  fi
+  if ! command -v runuser >/dev/null 2>&1; then
+    echo "ERROR: root container requires runuser to launch CARLA as $CARLA_RUN_USER." >&2
+    echo "Ask the image administrator to install util-linux or run the container as that user." >&2
+    exit 2
+  fi
+  if ! runuser -u "$CARLA_RUN_USER" -- test -r "$CARLA_SERVER"; then
+    echo "ERROR: CARLA server is not readable by $CARLA_RUN_USER: $CARLA_SERVER" >&2
+    exit 2
+  fi
+  if ! runuser -u "$CARLA_RUN_USER" -- test -w "$CARLA_ROOT"; then
+    echo "ERROR: CARLA_ROOT is not writable by $CARLA_RUN_USER: $CARLA_ROOT" >&2
+    echo "Extract CARLA into that user's persistent directory or grant ownership before retrying." >&2
+    exit 2
+  fi
+  CARLA_LAUNCH_PREFIX=(runuser -u "$CARLA_RUN_USER" --)
+fi
 
 "$PYTHON_BIN" run.py doctor --require-cuda --require-carla
 
 CARLA_LOG="${CARLA_LOG:-$PROJECT_ROOT/outputs/carla_${CARLA_PORT}.log}"
 echo "[job] Starting CARLA on $CARLA_HOST:$CARLA_PORT"
-"$CARLA_ROOT/CarlaUE4.sh" \
+"${CARLA_LAUNCH_PREFIX[@]}" "$CARLA_SERVER" \
   -RenderOffScreen \
   -quality-level="${CARLA_QUALITY_LEVEL:-Low}" \
   -carla-rpc-port="$CARLA_PORT" \

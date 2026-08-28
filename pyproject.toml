@@ -60,11 +60,9 @@ viz = [
     "seaborn>=0.13",           # Enhanced plotting
 ]
 carla = [
-    # CARLA 0.9.15 + CarDreamer task defs — install via:
-    #   bash scripts/setup_cardreamer.sh /path/to/carla
-    # This installs CARLA Python API. CarDreamer task definitions
-    # (car_dreamer/) are used for CARLA env setup only.
-    # DreamerV3 backbone is dreamerv3-torch (PyTorch), NOT CarDreamer's JAX version.
+    # CARLA 0.9.15's Linux CPython 3.10 API is published on PyPI. The
+    # simulator binary itself is downloaded separately by the runbook.
+    "carla==0.9.15",
 ]
 dev = [
     "pytest>=7.4",

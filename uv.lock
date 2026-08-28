@@ -103,6 +103,15 @@ wheels = [
 ]
 
 [[package]]
+name = "carla"
+version = "0.9.15"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/86/5a/74cf6657e5bb4b8ffe790ef92a01d7f44592a992d758c7053cd6bc75bd96/carla-0.9.15-cp310-cp310-manylinux_2_27_x86_64.whl", hash = "sha256:61449e33260f6a0cfd2f88d56f2463a5797a0b51bc46618beec07365422d4ad6", size = 31895950, upload-time = "2023-11-14T22:51:08.532Z" },
+    { url = "https://files.pythonhosted.org/packages/96/2e/211ca08509e0ec264df6547d6745917d5f9a5c62abae0fe48fc4300cf2a9/carla-0.9.15-cp310-cp310-win_amd64.whl", hash = "sha256:1ec9995169175f0d5e3e84762b7376214b72352ef006f22832d05c1380e62295", size = 4862744, upload-time = "2023-11-14T22:51:12.511Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.7.22"
 source = { registry = "https://pypi.org/simple" }
@@ -255,6 +264,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+carla = [
+    { name = "carla" },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -272,6 +284,7 @@ wandb = [
 requires-dist = [
     { name = "accelerate", specifier = ">=0.25" },
     { name = "av", specifier = ">=11.0" },
+    { name = "carla", marker = "extra == 'carla'", specifier = "==0.9.15" },
     { name = "einops", specifier = ">=0.7.0" },
     { name = "flask", specifier = ">=3.0,<4.0" },
     { name = "gym", specifier = ">=0.21,<1.0" },

@@ -13,14 +13,18 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CARDREAMER_DIR="$PROJECT_ROOT/third_party/CarDreamer"
 DREAMER_TORCH_DIR="$PROJECT_ROOT/third_party/dreamerv3_torch"
+DREAMER_BASE_COMMIT="6ef8646d807cd10ce0c88e10a7e943211e7fc44c"
+DREAMER_COMPAT_PATCH="$PROJECT_ROOT/patches/dreamerv3_torch_compat.patch"
+PYTHON_BIN="${PYTHON_BIN:-$PROJECT_ROOT/.venv/bin/python}"
+UV_BIN="${UV_BIN:-uv}"
 
 echo "============================================"
 echo "  Environment Setup"
 echo "============================================"
 
 # --- Step 1: CARLA path ---
-CARLA_ROOT="${1:-${CARLA_ROOT:-}}"
-if [ -z "$CARLA_ROOT" ]; then
+CARLA_ROOT_INPUT="${1:-${CARLA_ROOT:-}}"
+if [ -z "$CARLA_ROOT_INPUT" ]; then
     echo "ERROR: CARLA path required."
     echo "Usage: bash scripts/setup_cardreamer.sh /path/to/carla"
     echo ""
@@ -29,24 +33,97 @@ if [ -z "$CARLA_ROOT" ]; then
     exit 1
 fi
 
-if [ ! -d "$CARLA_ROOT" ]; then
-    echo "ERROR: CARLA directory not found: $CARLA_ROOT"
+if [ ! -e "$CARLA_ROOT_INPUT" ]; then
+    echo "ERROR: CARLA path not found: $CARLA_ROOT_INPUT"
     exit 1
 fi
 
+find_carla_server() {
+    local candidate="$1"
+    if [ -f "$candidate" ] && [ "$(basename "$candidate")" = "CarlaUE4.sh" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    if [ -f "$candidate/CarlaUE4.sh" ]; then
+        printf '%s\n' "$candidate/CarlaUE4.sh"
+        return 0
+    fi
+    find "$candidate" -maxdepth 3 -type f -name CarlaUE4.sh -print -quit
+}
+
+CARLA_SERVER="$(find_carla_server "$CARLA_ROOT_INPUT")"
+if [ -z "$CARLA_SERVER" ]; then
+    echo "ERROR: Could not find CarlaUE4.sh below: $CARLA_ROOT_INPUT"
+    echo "Pass either the CARLA directory or the directory containing CarlaUE4.sh."
+    exit 1
+fi
+if [ ! -x "$CARLA_SERVER" ]; then
+    echo "ERROR: CARLA server is not executable: $CARLA_SERVER"
+    echo "Run: chmod +x '$CARLA_SERVER'"
+    exit 1
+fi
+CARLA_ROOT="$(dirname "$CARLA_SERVER")"
+
 echo "[1/6] CARLA root: $CARLA_ROOT"
+echo "      CARLA server: $CARLA_SERVER"
 export CARLA_ROOT
 export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla:${PYTHONPATH:-}"
 
 # --- Step 2: Init submodules ---
-echo "[2/6] Initializing git submodules..."
+echo "[2/6] Checking git submodules..."
 cd "$PROJECT_ROOT"
-git submodule update --init --recursive
+if [ -d "$CARDREAMER_DIR/car_dreamer" ] && [ -f "$DREAMER_TORCH_DIR/models.py" ]; then
+    echo "  Submodule directories are already populated; skipping network update."
+else
+    echo "  Populating missing submodule directories..."
+    git submodule update --init --recursive
+fi
+
+if [ ! -d "$CARDREAMER_DIR/car_dreamer" ]; then
+    echo "ERROR: CarDreamer submodule is missing: $CARDREAMER_DIR"
+    exit 1
+fi
+if [ ! -f "$DREAMER_TORCH_DIR/models.py" ]; then
+    echo "ERROR: dreamerv3-torch submodule is missing: $DREAMER_TORCH_DIR"
+    exit 1
+fi
+
+# The public upstream repository no longer contains the old gitlink used by
+# earlier project commits. The superproject now pins its reachable main tip,
+# and this small tracked patch restores the custom-encoder and CPU-optimizer
+# interfaces required by this project. Existing newer working trees already
+# containing those interfaces are accepted unchanged.
+if ! grep -q "custom_encoder=None" "$DREAMER_TORCH_DIR/dreamer.py" \
+    || ! grep -q "custom_encoder=None" "$DREAMER_TORCH_DIR/models.py" \
+    || ! grep -q "self._use_amp = use_amp" "$DREAMER_TORCH_DIR/tools.py"; then
+    if [ ! -f "$DREAMER_COMPAT_PATCH" ]; then
+        echo "ERROR: Missing compatibility patch: $DREAMER_COMPAT_PATCH"
+        exit 1
+    fi
+    if ! git -C "$DREAMER_TORCH_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+        echo "ERROR: dreamerv3-torch is not a usable git checkout."
+        exit 1
+    fi
+    echo "  Applying project compatibility patch to dreamerv3-torch..."
+    if ! git -C "$DREAMER_TORCH_DIR" apply --check "$DREAMER_COMPAT_PATCH"; then
+        echo "ERROR: dreamerv3-torch is neither the pinned base nor a compatible patched tree."
+        echo "       Expected base commit: $DREAMER_BASE_COMMIT"
+        echo "       Current commit: $(git -C "$DREAMER_TORCH_DIR" rev-parse HEAD)"
+        exit 1
+    fi
+    git -C "$DREAMER_TORCH_DIR" apply "$DREAMER_COMPAT_PATCH"
+fi
+echo "  dreamerv3-torch commit: $(git -C "$DREAMER_TORCH_DIR" rev-parse HEAD)"
 
 # --- Step 3: Install project with uv ---
 echo "[3/6] Installing project dependencies via uv (locked)..."
 cd "$PROJECT_ROOT"
-uv sync --frozen --extra dev
+if [ ! -x "$PYTHON_BIN" ]; then
+    echo "ERROR: Project Python environment not found: $PYTHON_BIN"
+    echo "Run: uv sync --frozen --extra dev --extra carla"
+    exit 1
+fi
+"$UV_BIN" sync --frozen --extra dev --extra carla
 
 # --- Step 4: Prepare CarDreamer task definitions ---
 echo "[4/6] Preparing CarDreamer task definitions..."
@@ -55,26 +132,32 @@ echo "[4/6] Preparing CarDreamer task definitions..."
 # PYTHONPATH, so do not run `flit install` here.
 if [ ! -d "$CARDREAMER_DIR/car_dreamer" ]; then
     echo "  ERROR: CarDreamer submodule is missing."
-    echo "  Run: git submodule update --init --recursive"
     exit 1
 fi
 export PYTHONPATH="$CARDREAMER_DIR:${PYTHONPATH:-}"
 
 # --- Step 5: Install CARLA Python API ---
 echo "[5/6] Installing CARLA Python API..."
-CARLA_EGG=$(find "$CARLA_ROOT/PythonAPI/carla/dist" -name "carla-*cp310*.whl" 2>/dev/null | head -1)
-if [ -n "$CARLA_EGG" ]; then
-    python -m pip install "$CARLA_EGG"
-    echo "  Installed: $CARLA_EGG"
-else
-    CARLA_EGG=$(find "$CARLA_ROOT/PythonAPI/carla/dist" -name "carla-*cp310*.egg" 2>/dev/null | head -1)
-    if [ -n "$CARLA_EGG" ]; then
-        echo "  Found .egg: $CARLA_EGG"
-        echo "  Add the .egg to PYTHONPATH if no cp310 wheel is available."
-    else
-        echo "  WARNING: No CARLA Python 3.10 package found in $CARLA_ROOT"
-        echo "  You may need to build from source or download the correct version."
+CARLA_WHEEL=""
+CARLA_DIST="$CARLA_ROOT/PythonAPI/carla/dist"
+if [ -d "$CARLA_DIST" ]; then
+    CARLA_WHEEL=$(find "$CARLA_DIST" -name "carla-*cp310*.whl" -print -quit)
+fi
+if ! "$PYTHON_BIN" -c 'import pip' >/dev/null 2>&1; then
+    # The uv environment may not include pip. It is useful for diagnostics,
+    # but it is not required for uv's package installation path.
+    if ! "$UV_BIN" pip install --python "$PYTHON_BIN" pip; then
+        echo "  WARNING: pip could not be installed; continuing with uv pip."
     fi
+fi
+if [ -n "$CARLA_WHEEL" ]; then
+    "$UV_BIN" pip install --python "$PYTHON_BIN" "$CARLA_WHEEL"
+    echo "  Installed local wheel: $CARLA_WHEEL"
+elif "$PYTHON_BIN" -c 'import carla' >/dev/null 2>&1; then
+    echo "  CARLA API already installed by uv sync."
+else
+    echo "  No cp310 wheel in the simulator archive; using the PyPI package."
+    "$UV_BIN" pip install --python "$PYTHON_BIN" "carla==0.9.15"
 fi
 
 # --- Step 6: Verify setup ---
@@ -88,17 +171,17 @@ else
 fi
 
 echo -n "  CarDreamer tasks: "
-python -c 'import car_dreamer; print("OK")' 2>/dev/null || echo "NOT IMPORTABLE (task definitions may not be needed for unit tests)"
+"$PYTHON_BIN" -c 'import car_dreamer; print("OK")' 2>/dev/null || echo "NOT IMPORTABLE (task definitions may not be needed for unit tests)"
 
 echo -n "  CARLA API: "
-python -c 'import carla; print("OK")' 2>/dev/null || echo "NOT IMPORTABLE (need CARLA server for full training)"
+"$PYTHON_BIN" -c 'import carla; print("OK")' 2>/dev/null || echo "NOT IMPORTABLE (need CARLA server for full training)"
 
 echo -n "  PyTorch: "
-python -c 'import torch; print(f"OK (CUDA: {torch.cuda.is_available()}, devices: {torch.cuda.device_count()})")' 2>/dev/null || echo "MISSING"
+"$PYTHON_BIN" -c 'import torch; print(f"OK (CUDA: {torch.cuda.is_available()}, devices: {torch.cuda.device_count()})")' 2>/dev/null || echo "MISSING"
 
 echo -n "  Unit tests: "
 cd "$PROJECT_ROOT"
-uv run pytest tests/ -q --no-header 2>/dev/null | tail -1 || echo "FAILED"
+"$PYTHON_BIN" -m pytest tests/ -q --no-header 2>/dev/null | tail -1 || echo "FAILED"
 
 # --- Done ---
 echo ""

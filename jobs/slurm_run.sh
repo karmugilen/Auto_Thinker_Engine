@@ -77,6 +77,17 @@ CARLA_ROOT="$(dirname "$CARLA_SERVER")"
 export CARLA_ROOT
 export PYTHONPATH="$CARLA_ROOT/PythonAPI/carla:$PROJECT_ROOT/third_party/CarDreamer:$PROJECT_ROOT/third_party/dreamerv3_torch${PYTHONPATH:+:$PYTHONPATH}"
 
+# CARLA/Unreal needs the graphics-capable NVIDIA runtime, not only CUDA. This
+# validates that the container toolkit mounted a real NVIDIA Vulkan ICD and
+# also disables audio for headless execution.
+source "$PROJECT_ROOT/scripts/carla_runtime_env.sh"
+
+if [[ ! -w "$CARLA_ROOT" ]]; then
+  echo "ERROR: CARLA_ROOT is not writable by $(id -un 2>/dev/null || id -u): $CARLA_ROOT" >&2
+  echo "Mount the CARLA 0.9.15 directory read-write and use its owning UID." >&2
+  exit 2
+fi
+
 # Unreal/CARLA refuses uid 0. The preferred fix is to run the container/job as
 # a normal user. For containers that must start as root, CARLA_RUN_USER may
 # name an existing non-root account; only the CARLA server is then launched
@@ -120,6 +131,7 @@ CARLA_LOG="${CARLA_LOG:-$PROJECT_ROOT/outputs/carla_${CARLA_PORT}.log}"
 echo "[job] Starting CARLA on $CARLA_HOST:$CARLA_PORT"
 "${CARLA_LAUNCH_PREFIX[@]}" "$CARLA_SERVER" \
   -RenderOffScreen \
+  -nosound \
   -quality-level="${CARLA_QUALITY_LEVEL:-Low}" \
   -carla-rpc-port="$CARLA_PORT" \
   >"$CARLA_LOG" 2>&1 &

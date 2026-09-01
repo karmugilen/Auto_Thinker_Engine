@@ -1,0 +1,16 @@
+.git
+.gitmodules
+.venv
+__pycache__
+*.py[cod]
+outputs
+data
+wandb
+runs
+reports/*.png
+reports/*.pdf
+CarlaUE4
+CARLA_*
+*.tar.gz
+*.hevc
+*.bz2

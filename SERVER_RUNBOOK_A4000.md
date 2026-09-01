@@ -13,6 +13,11 @@ provided compute environment:
 All commands assume Bash. Replace every placeholder path with a path that is
 persistent on the server.
 
+> Gate 0 must use the checked-in [Docker CARLA runbook](DOCKER_CARLA_RUNBOOK.md)
+> or an equivalent container created with `NVIDIA_DRIVER_CAPABILITIES=all` and
+> `--shm-size=2g`. The older CUDA-only `mywork` container cannot run
+> CARLA/Unreal because it does not receive the host Vulkan/OpenGL libraries.
+
 ## 1. Viability verdict
 
 The workstation is viable for this project, with these limits:
@@ -46,8 +51,11 @@ git add \
   README.md \
   pyproject.toml \
   uv.lock \
+  .dockerignore \
+  Dockerfile \
   run.py \
   jobs/slurm_run.sh \
+  scripts/carla_runtime_env.sh \
   scripts/setup_cardreamer.sh \
   scripts/train_cardreamer.py \
   patches/dreamerv3_torch_compat.patch \
@@ -248,7 +256,7 @@ If the archive extracts directly into `$SOFTWARE_DIR`, the command above sets
 CARLA is run without a graphical display using:
 
 ```bash
--RenderOffScreen -quality-level=Low -carla-rpc-port=2000
+-RenderOffScreen -nosound -quality-level=Low -carla-rpc-port=2000
 ```
 
 The official CARLA documentation describes command-line Linux startup and

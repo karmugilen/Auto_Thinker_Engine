@@ -94,6 +94,12 @@ uv sync --extra viz      # UMAP, seaborn
 bash scripts/setup_cardreamer.sh /path/to/carla
 ```
 
+For the A4000 Docker path, use the checked-in [CARLA Docker runbook](DOCKER_CARLA_RUNBOOK.md).
+It builds a non-root Python 3.10 image and starts the container with the
+graphics-capable NVIDIA runtime, a 2 GiB `/dev/shm`, Vulkan ICD validation,
+dummy audio, and CARLA 0.9.15 mounted at `/opt/carla`. A CUDA-only container
+with `NVIDIA_DRIVER_CAPABILITIES=compute,utility` is not sufficient for CARLA.
+
 ### Dataset Download
 
 ```bash
@@ -112,7 +118,7 @@ uv run python scripts/download_comma2k19.py --output-dir data/comma2k19 --verify
 ### Phase 1: DreamerV3 Baseline
 ```bash
 # Start CARLA server first:
-# $CARLA_ROOT/CarlaUE4.sh -RenderOffScreen -quality-level=Low
+# $CARLA_ROOT/CarlaUE4.sh -RenderOffScreen -nosound -quality-level=Low
 # CARLA must be launched by a non-root user.
 
 uv run python scripts/train_cardreamer.py --arm cnn --task carla_right_turn_simple
@@ -176,6 +182,8 @@ storage when allocations can be preempted.
 
 For the complete runbook tailored to the Ubuntu 22.04 + RTX A4000 container,
 see [SERVER_RUNBOOK_A4000.md](SERVER_RUNBOOK_A4000.md).
+For the exact Docker build, `docker run`, and Gate 0 smoke commands, see
+[DOCKER_CARLA_RUNBOOK.md](DOCKER_CARLA_RUNBOOK.md).
 
 ## Key Design Decisions
 
